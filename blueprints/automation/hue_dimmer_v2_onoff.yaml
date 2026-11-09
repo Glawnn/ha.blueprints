@@ -1,0 +1,413 @@
+blueprint:
+  name: "Hue Dimmer v2 — On/Off + luminosité"
+  description: >-
+    Contrôle totalement configurable d'une lumière, d'un groupe, d'une zone
+    ou d'un appareil avec une télécommande Philips Hue Dimmer Switch v2
+    appairée via Zigbee2MQTT. Deux cibles (principale et secondaire), un
+    comportement au choix pour l'appui court et pour l'appui long (basculer,
+    allumer, éteindre, maître de pièce, ou action personnalisée), et variation
+    de luminosité par pas ou en maintien.
+  domain: automation
+  author: Glawnn
+  source_url: https://github.com/Glawnn/ha.blueprints/blob/main/blueprints/automation/hue_dimmer_v2_onoff.yaml
+  homeassistant:
+    min_version: 2026.11.0
+  input:
+    remote_section:
+      name: Télécommande
+      icon: mdi:remote
+      input:
+        remote:
+          name: Télécommande
+          description: Hue Dimmer Switch v2 (Zigbee2MQTT)
+          selector:
+            device:
+              filter:
+                - integration: mqtt
+                  model: Hue dimmer switch gen 2
+              multiple: false
+    targets_section:
+      name: Cibles
+      icon: mdi:lightbulb-group
+      description: >-
+        La cible 1 est utilisée par défaut pour l'appui court et la variation
+        de luminosité. La cible 2 est optionnelle : elle sert aux comportements
+        qui l'utilisent (cible 2, les deux cibles, maître de pièce).
+      input:
+        target:
+          name: Cible 1
+          description: Lumière(s), zone, appareil ou étiquette à contrôler
+          selector:
+            target:
+              entity:
+                domain: light
+        target_2:
+          name: Cible 2 (optionnelle)
+          description: >-
+            Lumière(s), zone, appareil ou étiquette secondaire. Laisser vide
+            si elle n'est pas utilisée.
+          default: {}
+          selector:
+            target:
+              entity:
+                domain: light
+    short_section:
+      name: Appui court
+      icon: mdi:gesture-tap
+      description: Comportement du bouton haut lors d'un appui court.
+      input:
+        short_press:
+          name: Comportement
+          default: toggle_target
+          selector:
+            select:
+              options: &press_options
+                - value: toggle_target
+                  label: Basculer la cible 1
+                - value: toggle_target_2
+                  label: Basculer la cible 2
+                - value: on_target
+                  label: Allumer la cible 1
+                - value: on_target_2
+                  label: Allumer la cible 2
+                - value: off_target
+                  label: Éteindre la cible 1
+                - value: off_target_2
+                  label: Éteindre la cible 2
+                - value: on_both
+                  label: Allumer les cibles 1 et 2
+                - value: off_both
+                  label: Éteindre les cibles 1 et 2
+                - value: master
+                  label: Maître de pièce (tout éteint si allumé, sinon allume la cible 1)
+                - value: custom
+                  label: Personnalisé (action libre)
+        short_press_action:
+          name: Action personnalisée
+          description: Utilisée uniquement si le comportement est « Personnalisé ».
+          default: []
+          visible:
+            field: short_press
+            value: custom
+          selector:
+            action:
+    long_section:
+      name: Appui long
+      icon: mdi:gesture-tap-hold
+      description: Comportement du bouton haut lors d'un appui long.
+      input:
+        long_press:
+          name: Comportement
+          default: on_target
+          selector:
+            select:
+              options: *press_options
+        long_press_action:
+          name: Action personnalisée
+          description: Utilisée uniquement si le comportement est « Personnalisé ».
+          default: []
+          visible:
+            field: long_press
+            value: custom
+          selector:
+            action:
+    advanced_section:
+      name: Réglages avancés
+      icon: mdi:cog
+      description: Transition, pas de variation et vitesse du maintien.
+      collapsed: true
+      input:
+        transition:
+          name: Transition (s)
+          description: Durée du fondu appliquée à chaque changement d'état ou de luminosité
+          default: 0.5
+          selector:
+            number:
+              min: 0
+              max: 5
+              step: 0.1
+              unit_of_measurement: s
+        step_pct:
+          name: Pas de variation (%)
+          description: Luminosité ajoutée ou retirée par appui et par pas de maintien
+          default: 10
+          selector:
+            number:
+              min: 1
+              max: 50
+              step: 1
+              unit_of_measurement: "%"
+        hold_delay:
+          name: Vitesse du maintien (s)
+          description: >-
+            Intervalle entre deux pas de luminosité pendant un maintien.
+            Plus la valeur est faible, plus la variation est rapide.
+          default: 0.4
+          selector:
+            number:
+              min: 0.1
+              max: 2
+              step: 0.1
+              unit_of_measurement: s
+              mode: slider
+
+mode: restart
+
+variables:
+  step: !input step_pct
+  delay_s: !input hold_delay
+  main_target: !input target
+  second_target: !input target_2
+  short_choice: !input short_press
+  long_choice: !input long_press
+  short_action: !input short_press_action
+  long_action: !input long_press_action
+  has_second: "{{ (second_target or {}) | length > 0 }}"
+  room_on: >-
+    {%- set ns = namespace(ids=[]) -%}
+    {%- for tgt in [main_target, second_target] -%}
+    {%- if tgt is mapping -%}
+    {%- for key in ['entity_id', 'device_id', 'area_id', 'label_id', 'floor_id'] -%}
+    {%- set val = tgt.get(key) -%}
+    {%- if val is string -%}{%- set vals = [val] -%}
+    {%- elif val is iterable and val is not string -%}{%- set vals = val | list -%}
+    {%- else -%}{%- set vals = [] -%}
+    {%- endif -%}
+    {%- for v in vals -%}
+    {%- if key == 'entity_id' -%}{%- set ns.ids = ns.ids + [v] -%}
+    {%- elif key == 'device_id' -%}{%- set ns.ids = ns.ids + (device_entities(v) | list) -%}
+    {%- elif key == 'area_id' -%}{%- set ns.ids = ns.ids + (area_entities(v) | list) -%}
+    {%- elif key == 'label_id' -%}{%- set ns.ids = ns.ids + (label_entities(v) | list) -%}
+    {%- elif key == 'floor_id' -%}{%- set ns.ids = ns.ids + (floor_entities(v) | list) -%}
+    {%- endif -%}
+    {%- endfor -%}
+    {%- endfor -%}
+    {%- endif -%}
+    {%- endfor -%}
+    {%- set lights = ns.ids | select('match', '^light[.]') | unique | list -%}
+    {{- lights | expand | selectattr('state', 'eq', 'on') | list | count > 0 -}}
+
+triggers:
+  - trigger: device
+    domain: mqtt
+    device_id: !input remote
+    type: action
+    subtype: on_press_release
+    id: toggle
+  - trigger: device
+    domain: mqtt
+    device_id: !input remote
+    type: action
+    subtype: on_hold
+    id: long_on
+  - trigger: device
+    domain: mqtt
+    device_id: !input remote
+    type: action
+    subtype: up_press
+    id: up_start
+  - trigger: device
+    domain: mqtt
+    device_id: !input remote
+    type: action
+    subtype: down_press
+    id: down_start
+  - trigger: device
+    domain: mqtt
+    device_id: !input remote
+    type: action
+    subtype: up_press_release
+    id: stop
+  - trigger: device
+    domain: mqtt
+    device_id: !input remote
+    type: action
+    subtype: up_hold_release
+    id: stop
+  - trigger: device
+    domain: mqtt
+    device_id: !input remote
+    type: action
+    subtype: down_press_release
+    id: stop
+  - trigger: device
+    domain: mqtt
+    device_id: !input remote
+    type: action
+    subtype: down_hold_release
+    id: stop
+
+actions:
+  - choose:
+      - conditions:
+          - condition: template
+            value_template: "{{ trigger.id in ['toggle', 'long_on'] }}"
+        sequence:
+          - variables:
+              choice: "{{ short_choice if trigger.id == 'toggle' else long_choice }}"
+          - choose:
+              - conditions: "{{ choice == 'toggle_target' }}"
+                sequence:
+                  - action: light.toggle
+                    target: !input target
+                    data:
+                      transition: !input transition
+              - conditions: "{{ choice == 'toggle_target_2' }}"
+                sequence:
+                  - if:
+                      - condition: template
+                        value_template: "{{ has_second }}"
+                    then:
+                      - action: light.toggle
+                        target: !input target_2
+                        data:
+                          transition: !input transition
+              - conditions: "{{ choice == 'on_target' }}"
+                sequence:
+                  - action: light.turn_on
+                    target: !input target
+                    data:
+                      transition: !input transition
+              - conditions: "{{ choice == 'on_target_2' }}"
+                sequence:
+                  - if:
+                      - condition: template
+                        value_template: "{{ has_second }}"
+                    then:
+                      - action: light.turn_on
+                        target: !input target_2
+                        data:
+                          transition: !input transition
+              - conditions: "{{ choice == 'off_target' }}"
+                sequence:
+                  - action: light.turn_off
+                    target: !input target
+                    data:
+                      transition: !input transition
+              - conditions: "{{ choice == 'off_target_2' }}"
+                sequence:
+                  - if:
+                      - condition: template
+                        value_template: "{{ has_second }}"
+                    then:
+                      - action: light.turn_off
+                        target: !input target_2
+                        data:
+                          transition: !input transition
+              - conditions: "{{ choice == 'on_both' }}"
+                sequence:
+                  - action: light.turn_on
+                    target: !input target
+                    data:
+                      transition: !input transition
+                  - if:
+                      - condition: template
+                        value_template: "{{ has_second }}"
+                    then:
+                      - action: light.turn_on
+                        target: !input target_2
+                        data:
+                          transition: !input transition
+              - conditions: "{{ choice == 'off_both' }}"
+                sequence:
+                  - action: light.turn_off
+                    target: !input target
+                    data:
+                      transition: !input transition
+                  - if:
+                      - condition: template
+                        value_template: "{{ has_second }}"
+                    then:
+                      - action: light.turn_off
+                        target: !input target_2
+                        data:
+                          transition: !input transition
+              - conditions: "{{ choice == 'master' }}"
+                sequence:
+                  - if:
+                      - condition: template
+                        value_template: "{{ room_on }}"
+                    then:
+                      - action: light.turn_off
+                        target: !input target
+                        data:
+                          transition: !input transition
+                      - if:
+                          - condition: template
+                            value_template: "{{ has_second }}"
+                        then:
+                          - action: light.turn_off
+                            target: !input target_2
+                            data:
+                              transition: !input transition
+                    else:
+                      - action: light.turn_on
+                        target: !input target
+                        data:
+                          transition: !input transition
+              - conditions: "{{ choice == 'custom' and trigger.id == 'toggle' }}"
+                sequence:
+                  - choose:
+                      - conditions: "{{ (short_action | length) > 0 }}"
+                        sequence: !input short_press_action
+              - conditions: "{{ choice == 'custom' and trigger.id == 'long_on' }}"
+                sequence:
+                  - choose:
+                      - conditions: "{{ (long_action | length) > 0 }}"
+                        sequence: !input long_press_action
+      - conditions:
+          - condition: trigger
+            id: up_start
+        sequence:
+          - action: light.turn_on
+            target: !input target
+            data:
+              brightness_step_pct: "{{ step | int }}"
+              transition: !input transition
+          - wait_for_trigger:
+              - trigger: device
+                domain: mqtt
+                device_id: !input remote
+                type: action
+                subtype: up_hold
+            timeout:
+              seconds: 2
+            continue_on_timeout: false
+          - repeat:
+              count: "{{ (100 // (step | int)) + 2 }}"
+              sequence:
+                - action: light.turn_on
+                  target: !input target
+                  data:
+                    brightness_step_pct: "{{ step | int }}"
+                    transition: !input transition
+                - delay:
+                    seconds: "{{ delay_s }}"
+      - conditions:
+          - condition: trigger
+            id: down_start
+        sequence:
+          - action: light.turn_on
+            target: !input target
+            data:
+              brightness_step_pct: "{{ -(step | int) }}"
+              transition: !input transition
+          - wait_for_trigger:
+              - trigger: device
+                domain: mqtt
+                device_id: !input remote
+                type: action
+                subtype: down_hold
+            timeout:
+              seconds: 2
+            continue_on_timeout: false
+          - repeat:
+              count: "{{ (100 // (step | int)) + 2 }}"
+              sequence:
+                - action: light.turn_on
+                  target: !input target
+                  data:
+                    brightness_step_pct: "{{ -(step | int) }}"
+                    transition: !input transition
+                - delay:
+                    seconds: "{{ delay_s }}"
