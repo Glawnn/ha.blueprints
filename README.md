@@ -7,10 +7,12 @@ Blueprints Home Assistant réutilisables, maintenus par [Glawnn](https://github.
 | Blueprint | Description |
 |---|---|
 | [Hue Dimmer v2 — On/Off + luminosité](blueprints/automation/hue_dimmer_v2_onoff.yaml) | Marche/arrêt, variation de luminosité et comportements d'appui court/long configurables (deux cibles) avec une télécommande Philips Hue Dimmer Switch v2 (Zigbee2MQTT). |
+| [Motion-activated Light](blueprints/automation/motion-activated-light.yaml) | Allume/éteint automatiquement une lumière selon la détection d'un capteur de mouvement, avec un délai d'extinction réglable et un seuil de luminosité optionnel. |
 
 ## Installation
 
 [![Ouvrir votre instance Home Assistant et afficher le dialogue d'import du blueprint.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FGlawnn%2Fha.blueprints%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fhue_dimmer_v2_onoff.yaml)
+[![Ouvrir votre instance Home Assistant et afficher le dialogue d'import du blueprint.](https://my.home-assistant.io/badges/blueprint_import.svg)](https://my.home-assistant.io/redirect/blueprint_import/?blueprint_url=https%3A%2F%2Fgithub.com%2FGlawnn%2Fha.blueprints%2Fblob%2Fmain%2Fblueprints%2Fautomation%2Fmotion-activated-light.yaml)
 
 Ou manuellement :
 
@@ -102,6 +104,33 @@ allumé, sinon il n'allume que le plafonnier ; un appui long allume les deux.
   Si votre firmware n'émet que `*_press`, adaptez les `subtype` du blueprint.
 - Le maintien démarre à la réception du premier `*_hold` ; un appui court
   applique donc toujours exactement un pas.
+
+## Motion-activated Light
+
+Allume une lumière (ou un groupe, une zone, un appareil ou une étiquette) quand un capteur de mouvement détecte une présence, puis l'éteint après un délai réglable sans nouveau mouvement.
+
+### Inputs
+
+| Input | Type | Défaut | Description |
+|---|---|---|---|
+| `motion_sensor` | entité | — | Capteur de mouvement (filtré sur `device_class: motion` ou `occupancy`). |
+| `light_target` | cible | — | Lumière(s), zone, appareil ou étiquette à contrôler. |
+| `no_motion_delay` | nombre (s) | `120` | Temps à attendre avant d'éteindre la cible. |
+| `lux_sensor` | entité | — | Capteur de luminosité (optionnel, `device_class: illuminance`). Si renseigné, on n'allume que si le lux est en dessous du seuil. |
+| `lux_threshold` | nombre (lux) | `50` | Seuil de luminosité en dessous duquel la lumière s'allume. |
+
+### Prérequis
+
+- Home Assistant **2026.11.0** ou plus récent.
+- Un capteur de mouvement appairé (entité `binary_sensor` avec `device_class: motion` ou `occupancy`).
+
+### Comportement
+
+- Chaque passage du capteur de `off` à `on` allume la cible, sauf si une cible est déjà allumée (la lumière reste alors allumée).
+- Le seuil de luminosité ne conditionne que l'allumage : si une cible est déjà allumée, le lux n'est pas vérifié et rien ne se passe (pas de boucle, pas d'extinction intempestive).
+- Si `lux_sensor` est renseigné et que le lux courant est supérieur ou égal à `lux_threshold`, la lumière ne s'allume pas (fait jour).
+- Le délai (`no_motion_delay`) recommence à zéro à chaque nouvelle détection (`mode: restart`).
+- À l'issue du délai sans mouvement, la cible est éteinte.
 
 ## Mise à jour d'un blueprint
 

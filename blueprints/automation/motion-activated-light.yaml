@@ -1,0 +1,93 @@
+blueprint:
+  name: "Motion-activated Light"
+  description: >
+    Contrôle automatique des lumières en fonction de la détection de mouvement.
+  domain: automation
+  author: Glawnn
+  source_url: https://github.com/Glawnn/ha.blueprints/blob/main/blueprints/automation/motion-activated-light.yaml
+  homeassistant:
+    min_version: 2026.11.0
+
+  input:
+    motion_sensor:
+      name: Capteur de mouvement
+      description: Sélectionnez le capteur de mouvement.
+      selector:
+        entity:
+          filter:
+            - domain: binary_sensor
+              device_class: motion
+            - domain: binary_sensor
+              device_class: occupancy
+
+    light_target:
+      name: Lumières
+      description: Sélectionnez les lumières ou interrupteurs à contrôler.
+      selector:
+        target: {}
+
+    no_motion_delay:
+      name: Délai sans mouvement
+      description: Temps à attendre avant d'éteindre la cible.
+      default: 120
+      selector:
+        number:
+          min: 0
+          max: 3600
+          step: 5
+          unit_of_measurement: seconds
+          mode: slider
+
+    lux_sensor:
+      name: Capteur de luminosité
+      description: Capteur de luminosité (optionnel). Si renseigné, la lumière ne s'allume que si le lux est en dessous du seuil.
+      default: null
+      selector:
+        entity:
+          filter:
+            - domain: sensor
+              device_class: illuminance
+
+    lux_threshold:
+      name: Seuil de luminosité (lux)
+      description: Seuil en dessous duquel la lumière s'allume. Au-dessus, rien ne se passe.
+      default: 50
+      selector:
+        number:
+          min: 0
+          max: 100000
+          step: 1
+          unit_of_measurement: lux
+          mode: slider
+
+mode: restart
+
+triggers:
+  - trigger: state
+    entity_id: !input motion_sensor
+    from: "off"
+    to: "on"
+
+actions:
+  - variables:
+      lux_sensor: !input lux_sensor
+      lux_threshold: !input lux_threshold
+
+  - if:
+      - condition: template
+        value_template: >
+          {{- (lux_sensor is none) or (states(lux_sensor) | float(999999) < lux_threshold) -}}
+    then:
+      - action: homeassistant.turn_on
+        target: !input light_target
+
+      - wait_for_trigger:
+          - trigger: state
+            entity_id: !input motion_sensor
+            to: "off"
+
+      - delay:
+          seconds: !input no_motion_delay
+
+      - action: homeassistant.turn_off
+        target: !input light_target
