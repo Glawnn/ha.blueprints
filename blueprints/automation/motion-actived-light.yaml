@@ -1,0 +1,51 @@
+blueprint:
+  name: "Motion-activated-Light"
+  description: >
+    Automatically control lights based on motion detection.
+  domain: automation
+  author: Glawnn
+  homeassistant:
+    min_version: 2026.11.0
+
+  motion_sensor:
+    name: Motion sensor
+    description: Select the motion sensor.
+    selector:
+        entity:
+          filter:
+            - domain: binary_sensor
+              device_class: motion
+
+  light_target:
+    name: Lights
+    description: Select the lights or switches to control.
+    selector:
+      target:
+
+  no_motion_delay:
+    name: No motion delay
+    description: Time to wait before turning off the target.
+    default: 120
+    selector:
+      number:
+        min: 0
+        max: 3600
+        step: 5
+        unit_of_measurement: seconds
+        mode: slider
+
+mode: restart
+
+triggers:
+  - trigger: state
+    entity_id: !input motion_sensor
+    from: "off"
+    to: "on"
+
+actions:
+  - action: homeassistant.turn_on
+    target: !input light_target
+  - delay:
+    seconds: !input no_motion_delay
+  - action: homeassistant.turn_off
+    target: !input light_target
